@@ -20,10 +20,19 @@ interface DictionaryDao {
     @Query("SELECT word FROM offline_words WHERE word LIKE :prefix LIMIT :limit")
     suspend fun getWordsStartingWith(prefix: String, limit: Int = 50): List<String>
 
-    @Query("SELECT word FROM offline_words WHERE word LIKE :charPrefix AND length(word) BETWEEN :minLen AND :maxLen LIMIT 500")
+    @Query("SELECT word FROM offline_words WHERE word LIKE :charPrefix AND length(word) BETWEEN :minLen AND :maxLen LIMIT 300")
     suspend fun getCandidateWords(charPrefix: String, minLen: Int, maxLen: Int): List<String>
 
-    @Query("SELECT word FROM offline_words WHERE length(word) BETWEEN :minLen AND :maxLen LIMIT 1000")
+    @Query("SELECT word FROM scrabble_words WHERE word LIKE :charPrefix AND length(word) BETWEEN :minLen AND :maxLen LIMIT 200")
+    suspend fun getScrabbleCandidateWords(charPrefix: String, minLen: Int, maxLen: Int): List<String>
+
+    @Query("SELECT word FROM offline_words WHERE word LIKE :suffix AND length(word) BETWEEN :minLen AND :maxLen LIMIT 200")
+    suspend fun getCandidateWordsBySuffix(suffix: String, minLen: Int, maxLen: Int): List<String>
+
+    @Query("SELECT word FROM scrabble_words WHERE word LIKE :suffix AND length(word) BETWEEN :minLen AND :maxLen LIMIT 200")
+    suspend fun getScrabbleWordsBySuffix(suffix: String, minLen: Int, maxLen: Int): List<String>
+
+    @Query("SELECT word FROM offline_words WHERE length(word) BETWEEN :minLen AND :maxLen LIMIT 500")
     suspend fun getFallbackCandidateWords(minLen: Int, maxLen: Int): List<String>
 
     // Scrabble

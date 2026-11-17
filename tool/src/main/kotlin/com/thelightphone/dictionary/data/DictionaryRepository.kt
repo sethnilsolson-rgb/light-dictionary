@@ -93,7 +93,15 @@ class DictionaryRepository(
             return@withContext WebsterParser.parse(offline.word, offline.definition)
         }
 
-        // 4. Online live fetch fallback
+        // 4. Check if word is a recognized English word in Scrabble tournament lexicon
+        val isScrabble = database.dictionaryDao().isScrabbleLegal(normalized)
+        if (!isScrabble) {
+            // Not in Webster (102k words) and not in Scrabble (83k words) -> typo or non-word!
+            // Skip network entirely to avoid blocking the user on "Looking up..."
+            return@withContext null
+        }
+
+        // 5. Valid English word: attempt online fetch for definitions
         val result = DictionaryService.fetchWordOnline(normalized)
         val fetched = result.getOrNull()
         if (fetched != null) {
@@ -110,6 +118,24 @@ class DictionaryRepository(
             return@withContext fetched
         }
 
+        // 6. Offline fallback for Scrabble word when network is unavailable
+        recordRecentSearch(normalized)
+        WordEntry(
+            word = normalized,
+            phonetic = "",
+            origin = "Tournament word list",
+            meanings = listOf(
+                WordMeaning(
+                    partOfSpeech = "word",
+                    definitions = listOf(
+                        WordDefinition(
+                            definition = "Valid English word (Scrabble tournament verified). Connect to network to fetch full definitions and examples."
+                        )
+                    )
+                )
+            )
+        )
+
         null
     }
 
@@ -117,31 +143,107 @@ class DictionaryRepository(
         val q = word.trim().lowercase()
         if (q.length < 2) return@withContext emptyList()
 
-        val minLen = (q.length - 2).coerceAtLeast(1)
-        val maxLen = q.length + 2
+        // 1. Handle repeated character collapse (e.g. crilll -> crill and cril)
+        val collapsed = q.replace(Regex("(.)\\1+"), "$1$1")
+        val single = q.replace(Regex("(.)\\1+"), "$1")
+
+        val minLen = minOf(q.length, collapsed.length, single.length).minus(2).coerceAtLeast(2)
+        val maxLen = maxOf(q.length, collapsed.length) + 2
+
+        val prefixes = mutableSetOf<String>()
+        for (base in listOf(q, collapsed, single)) {
+            if (base.length >= 4) prefixes.add(base.substring(0, 4))
+            if (base.length >= 3) prefixes.add(base.substring(0, 3))
+            prefixes.add(base.substring(0, 2))
+        }
+
+        // 2. Phonetic variations on prefixes
+        val phoneticPrefixes = mutableSetOf<String>()
+        for (p in prefixes) {
+            when {
+                p.startsWith("c") -> {
+                    phoneticPrefixes.add("k" + p.substring(1))
+                    phoneticPrefixes.add("s" + p.substring(1))
+                }
+                p.startsWith("k") -> phoneticPrefixes.add("c" + p.substring(1))
+                p.startsWith("ph") -> phoneticPrefixes.add("f" + p.substring(2))
+                p.startsWith("f") -> phoneticPrefixes.add("ph" + p.substring(1))
+                p.startsWith("w") -> phoneticPrefixes.add("wh" + p.substring(1))
+                p.startsWith("wh") -> phoneticPrefixes.add("w" + p.substring(2))
+                p.startsWith("sc") -> phoneticPrefixes.add("sk" + p.substring(2))
+                p.startsWith("sk") -> phoneticPrefixes.add("sc" + p.substring(2))
+                p.startsWith("j") -> phoneticPrefixes.add("g" + p.substring(1))
+                p.startsWith("g") -> phoneticPrefixes.add("j" + p.substring(1))
+                p.startsWith("x") -> {
+                    phoneticPrefixes.add("z" + p.substring(1))
+                    phoneticPrefixes.add("xy")
+                    phoneticPrefixes.add("ex" + p.substring(1))
+                }
+            }
+        }
+        prefixes.addAll(phoneticPrefixes)
+
         val candidates = mutableSetOf<String>()
 
-        val prefixes = mutableListOf<String>()
-        if (q.length >= 4) prefixes.add(q.substring(0, 4))
-        if (q.length >= 3) prefixes.add(q.substring(0, 3))
-        prefixes.add(q.substring(0, 2))
-
-        if (q.contains("f")) prefixes.add(q.replace("f", "ph").take(4))
-        if (q.contains("ph")) prefixes.add(q.replace("ph", "f").take(3))
-
+        // 3. Query candidate prefixes across offline_words and scrabble_words
         for (p in prefixes) {
             candidates.addAll(database.dictionaryDao().getCandidateWords("$p%", minLen, maxLen))
+            candidates.addAll(database.dictionaryDao().getScrabbleCandidateWords("$p%", minLen, maxLen))
+        }
+
+        // 4. Query candidate suffixes across offline_words and scrabble_words (e.g. "...ill")
+        for (base in listOf(collapsed, q)) {
+            if (base.length >= 4) {
+                val suf = base.takeLast(3)
+                candidates.addAll(database.dictionaryDao().getCandidateWordsBySuffix("%$suf", minLen, maxLen))
+                candidates.addAll(database.dictionaryDao().getScrabbleWordsBySuffix("%$suf", minLen, maxLen))
+            }
         }
 
         val builtInWords = BuiltInDictionary.entries.map { it.word }
         candidates.addAll(builtInWords)
 
-        candidates
-            .map { Pair(it, WebsterParser.levenshteinDistance(q, it)) }
+        // 5. Score candidates with Levenshtein distance against q, collapsed, and single
+        val scored = candidates
+            .map { w ->
+                val dist = minOf(
+                    WebsterParser.levenshteinDistance(q, w),
+                    WebsterParser.levenshteinDistance(collapsed, w),
+                    WebsterParser.levenshteinDistance(single, w)
+                )
+                Pair(w, dist)
+            }
             .filter { it.second <= 3 }
-            .sortedWith(compareBy<Pair<String, Int>> { it.second }.thenBy { it.first.length })
-            .take(5)
+            .sortedWith(
+                compareBy<Pair<String, Int>> { it.second }
+                    .thenBy { kotlin.math.abs(it.first.length - collapsed.length) }
+                    .thenBy { it.first }
+            )
             .map { it.first }
+
+        if (scored.isNotEmpty()) {
+            return@withContext scored.take(8)
+        }
+
+        // Fallback for extreme typos (distance <= 4)
+        val fallbackScored = candidates
+            .map { w ->
+                val dist = minOf(
+                    WebsterParser.levenshteinDistance(q, w),
+                    WebsterParser.levenshteinDistance(collapsed, w),
+                    WebsterParser.levenshteinDistance(single, w)
+                )
+                Pair(w, dist)
+            }
+            .filter { it.second <= 4 }
+            .sortedWith(
+                compareBy<Pair<String, Int>> { it.second }
+                    .thenBy { kotlin.math.abs(it.first.length - collapsed.length) }
+                    .thenBy { it.first }
+            )
+            .map { it.first }
+
+        fallbackScored.take(8)
     }
 
     suspend fun isScrabbleLegal(word: String): Boolean = withContext(Dispatchers.IO) {
@@ -166,6 +268,7 @@ class DictionaryRepository(
 
         for (p in prefixes) {
             candidates.addAll(database.dictionaryDao().getCandidateWords("$p%", minLen, maxLen))
+            candidates.addAll(database.dictionaryDao().getScrabbleCandidateWords("$p%", minLen, maxLen))
         }
 
         candidates.remove(q)
