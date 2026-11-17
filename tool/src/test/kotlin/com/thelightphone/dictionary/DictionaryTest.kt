@@ -74,4 +74,27 @@ class DictionaryTest {
         assertEquals("hate", entry.word)
         assertTrue(entry.meanings.isNotEmpty())
     }
+
+    @Test
+    fun testOnlineFetchAlphabet() = kotlinx.coroutines.runBlocking {
+        val result = com.thelightphone.dictionary.data.DictionaryService.fetchWordOnline("alphabet")
+        assertTrue(result.isSuccess, "fetchWordOnline('alphabet') failed: ${result.exceptionOrNull()}")
+        val entry = result.getOrNull()
+        assertNotNull(entry)
+        assertEquals("alphabet", entry.word)
+        assertTrue(entry.meanings.isNotEmpty())
+    }
+
+    @Test
+    fun testWebsterParserAndLevenshtein() {
+        val raw = "1. The letters of a language arranged in the customary order. 2. The simplest rudiments; elements."
+        val entry = com.thelightphone.dictionary.data.WebsterParser.parse("alphabet", raw)
+        assertEquals("alphabet", entry.word)
+        assertTrue(entry.meanings.isNotEmpty())
+        val defs = entry.meanings.first().definitions
+        assertTrue(defs.isNotEmpty())
+
+        val dist = com.thelightphone.dictionary.data.WebsterParser.levenshteinDistance("alfabet", "alphabet")
+        assertEquals(2, dist)
+    }
 }

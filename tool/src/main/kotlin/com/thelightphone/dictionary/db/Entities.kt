@@ -3,6 +3,13 @@ package com.thelightphone.dictionary.db
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+@Entity(tableName = "offline_words")
+data class OfflineWordEntity(
+    @PrimaryKey
+    val word: String,
+    val definition: String,
+)
+
 @Entity(tableName = "cached_words")
 data class CachedWordEntity(
     @PrimaryKey

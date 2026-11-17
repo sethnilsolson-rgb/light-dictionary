@@ -6,7 +6,6 @@ import com.thelightphone.dictionary.db.DictionaryDatabase
 import com.thelightphone.dictionary.db.RecentSearchEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -64,7 +63,7 @@ class DictionaryRepository(
         val normalized = word.trim().lowercase()
         if (normalized.isBlank()) return@withContext null
 
-        // 1. Check built-in dictionary
+        // 1. Check curated built-in dictionary
         val builtIn = BuiltInDictionary.find(normalized)
         if (builtIn != null) {
             recordRecentSearch(normalized)
@@ -87,7 +86,14 @@ class DictionaryRepository(
             )
         }
 
-        // 3. Online fetch fallback
+        // 3. Check extensive offline dictionary (over 100,000 words, 0ms latency)
+        val offline = database.dictionaryDao().getOfflineWord(normalized)
+        if (offline != null) {
+            recordRecentSearch(normalized)
+            return@withContext WebsterParser.parse(offline.word, offline.definition)
+        }
+
+        // 4. Online live fetch fallback
         val result = DictionaryService.fetchWordOnline(normalized)
         val fetched = result.getOrNull()
         if (fetched != null) {
@@ -107,6 +113,37 @@ class DictionaryRepository(
         null
     }
 
+    suspend fun getSuggestions(word: String): List<String> = withContext(Dispatchers.IO) {
+        val q = word.trim().lowercase()
+        if (q.length < 2) return@withContext emptyList()
+
+        val minLen = (q.length - 2).coerceAtLeast(1)
+        val maxLen = q.length + 2
+        val candidates = mutableSetOf<String>()
+
+        val prefixes = mutableListOf<String>()
+        if (q.length >= 4) prefixes.add(q.substring(0, 4))
+        if (q.length >= 3) prefixes.add(q.substring(0, 3))
+        prefixes.add(q.substring(0, 2))
+
+        if (q.contains("f")) prefixes.add(q.replace("f", "ph").take(4))
+        if (q.contains("ph")) prefixes.add(q.replace("ph", "f").take(3))
+
+        for (p in prefixes) {
+            candidates.addAll(database.dictionaryDao().getCandidateWords("$p%", minLen, maxLen))
+        }
+
+        val builtInWords = BuiltInDictionary.entries.map { it.word }
+        candidates.addAll(builtInWords)
+
+        candidates
+            .map { Pair(it, WebsterParser.levenshteinDistance(q, it)) }
+            .filter { it.second <= 3 }
+            .sortedWith(compareBy<Pair<String, Int>> { it.second }.thenBy { it.first.length })
+            .take(5)
+            .map { it.first }
+    }
+
     suspend fun searchWords(query: String): List<String> = withContext(Dispatchers.IO) {
         val q = query.trim().lowercase()
         if (q.isBlank()) return@withContext emptyList()
@@ -114,8 +151,9 @@ class DictionaryRepository(
         val builtInMatches = BuiltInDictionary.search(q)
         val cachedWords = database.dictionaryDao().getAllCachedWords()
         val cachedMatches = cachedWords.filter { it.contains(q) }
+        val offlineMatches = database.dictionaryDao().searchOfflineWords("$q%", 25)
 
-        (builtInMatches + cachedMatches).distinct().sortedWith(
+        (builtInMatches + cachedMatches + offlineMatches).distinct().sortedWith(
             compareBy<String> { !it.startsWith(q) }
                 .thenBy { it.length }
                 .thenBy { it }
@@ -138,7 +176,6 @@ class DictionaryRepository(
             val next = if (idx < list.size - 1) list[idx + 1] else null
             Pair(prev, next)
         } else {
-            // Find insertion point to get closest alphabetical neighbors
             var insertionIdx = list.binarySearch(normalized)
             if (insertionIdx < 0) {
                 insertionIdx = -(insertionIdx + 1)
@@ -155,7 +192,9 @@ class DictionaryRepository(
         @Volatile
         private var instance: DictionaryRepository? = null
 
-        fun getInstance(dbProvider: () -> DictionaryDatabase): DictionaryRepository {
+        fun getInstance(
+            dbProvider: () -> DictionaryDatabase
+        ): DictionaryRepository {
             return instance ?: synchronized(this) {
                 instance ?: DictionaryRepository(dbProvider()).also { instance = it }
             }

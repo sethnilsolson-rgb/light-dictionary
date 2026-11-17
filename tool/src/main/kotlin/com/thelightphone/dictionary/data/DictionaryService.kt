@@ -21,8 +21,8 @@ object DictionaryService {
             val url = URI("https://api.dictionaryapi.dev/api/v2/entries/en/$encoded").toURL()
 
             val connection = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 10000
-                readTimeout = 12000
+                connectTimeout = 3000
+                readTimeout = 4000
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")

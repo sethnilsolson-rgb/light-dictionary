@@ -10,6 +10,20 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface DictionaryDao {
 
+    // Offline Dictionary
+    @Query("SELECT * FROM offline_words WHERE word = :word LIMIT 1")
+    suspend fun getOfflineWord(word: String): OfflineWordEntity?
+
+    @Query("SELECT word FROM offline_words WHERE word LIKE :prefix ORDER BY length(word), word LIMIT :limit")
+    suspend fun searchOfflineWords(prefix: String, limit: Int = 25): List<String>
+
+    @Query("SELECT word FROM offline_words WHERE word LIKE :charPrefix AND length(word) BETWEEN :minLen AND :maxLen LIMIT 500")
+    suspend fun getCandidateWords(charPrefix: String, minLen: Int, maxLen: Int): List<String>
+
+    @Query("SELECT word FROM offline_words WHERE length(word) BETWEEN :minLen AND :maxLen LIMIT 1000")
+    suspend fun getFallbackCandidateWords(minLen: Int, maxLen: Int): List<String>
+
+    // Cached Online Words
     @Query("SELECT * FROM cached_words WHERE word = :word LIMIT 1")
     suspend fun getCachedWord(word: String): CachedWordEntity?
 

@@ -101,12 +101,15 @@ class HomeScreen(
     sealedActivity: SealedLightActivity,
 ) : LightScreen<Unit, HomeScreenViewModel>(sealedActivity) {
 
-    private val repository = DictionaryRepository.getInstance {
-        lightContext.buildDatabase(
-            DictionaryDatabase::class.java,
-            DictionaryRepository.DATABASE_NAME
-        ) {
-            fallbackToDestructiveMigration()
+    private val repository by lazy {
+        DictionaryRepository.getInstance {
+            lightContext.buildDatabase(
+                DictionaryDatabase::class.java,
+                DictionaryRepository.DATABASE_NAME
+            ) {
+                createFromAsset("offline_dictionary.db")
+                fallbackToDestructiveMigration()
+            }
         }
     }
 

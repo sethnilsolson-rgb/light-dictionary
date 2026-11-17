@@ -65,6 +65,9 @@ class WordDetailViewModel(
     private val _adjacentWords = MutableStateFlow<Pair<String?, String?>>(Pair(null, null))
     val adjacentWords: StateFlow<Pair<String?, String?>> = _adjacentWords.asStateFlow()
 
+    private val _suggestions = MutableStateFlow<List<String>>(emptyList())
+    val suggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
+
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
         loadWord(_currentWord.value)
@@ -83,6 +86,11 @@ class WordDetailViewModel(
         viewModelScope.launch {
             val result = repository.getWord(word)
             _entry.value = result
+            if (result == null) {
+                _suggestions.value = repository.getSuggestions(word)
+            } else {
+                _suggestions.value = emptyList()
+            }
             _isLoading.value = false
 
             val adjacent = repository.getAdjacentWords(word)
@@ -117,6 +125,7 @@ class WordDetailScreen(
         val isBookmarked by viewModel.isBookmarked.collectAsState()
         val adjacentWords by viewModel.adjacentWords.collectAsState()
         val currentWord by viewModel.currentWord.collectAsState()
+        val suggestions by viewModel.suggestions.collectAsState()
 
         val contentColor = LightThemeTokens.colors.content
         val bookmarkPainter = rememberVectorPainter(
@@ -168,18 +177,63 @@ class WordDetailScreen(
                             LightText("Looking up...", variant = LightTextVariant.Paragraph)
                         }
                     } else if (entry == null) {
-                        Box(
+                        LightScrollView(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
-                                .padding(2f.gridUnitsAsDp()),
-                            contentAlignment = Alignment.Center,
+                                .padding(horizontal = 1.5f.gridUnitsAsDp())
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                LightText("No definition found for '$currentWord'.", variant = LightTextVariant.Paragraph)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                LightText("Check spelling or connect to Wi-Fi for live lookup.", variant = LightTextVariant.Detail)
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            LightText(
+                                text = "No definition found for \"$currentWord\".",
+                                variant = LightTextVariant.Heading
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            if (suggestions.isNotEmpty()) {
+                                LightText(
+                                    text = "DID YOU MEAN?",
+                                    variant = LightTextVariant.Detail
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                suggestions.forEach { suggestion ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .lightClickable { viewModel.loadWord(suggestion) }
+                                            .padding(vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            LightText(
+                                                text = suggestion,
+                                                variant = LightTextVariant.Paragraph
+                                            )
+                                        }
+                                        LightText(
+                                            text = "→",
+                                            variant = LightTextVariant.Detail
+                                        )
+                                    }
+                                    Spacer(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(1.dp)
+                                            .background(LightThemeTokens.colors.content.copy(alpha = 0.2f))
+                                    )
+                                }
+                            } else {
+                                LightText(
+                                    text = "Check spelling or search for another word.",
+                                    variant = LightTextVariant.Detail
+                                )
                             }
+
+                            Spacer(modifier = Modifier.height(24.dp))
                         }
                     } else {
                         val wordEntry = entry!!

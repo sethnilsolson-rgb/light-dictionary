@@ -5,11 +5,12 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [
+        OfflineWordEntity::class,
         CachedWordEntity::class,
         BookmarkWordEntity::class,
         RecentSearchEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class DictionaryDatabase : RoomDatabase() {
