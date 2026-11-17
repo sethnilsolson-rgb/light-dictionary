@@ -64,4 +64,14 @@ class DictionaryTest {
         }
         assertTrue(wordsWithExamples.size >= 30)
     }
+
+    @Test
+    fun testOnlineFetchHate() = kotlinx.coroutines.runBlocking {
+        val result = com.thelightphone.dictionary.data.DictionaryService.fetchWordOnline("hate")
+        assertTrue(result.isSuccess, "fetchWordOnline('hate') failed: ${result.exceptionOrNull()}")
+        val entry = result.getOrNull()
+        assertNotNull(entry)
+        assertEquals("hate", entry.word)
+        assertTrue(entry.meanings.isNotEmpty())
+    }
 }

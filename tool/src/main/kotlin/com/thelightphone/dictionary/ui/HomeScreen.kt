@@ -125,13 +125,6 @@ class HomeScreen(
         val searchFieldState = rememberTextFieldState("")
         val keyboardOptionsFlow = rememberKeyboardOptions()
 
-        val contentColor = LightThemeTokens.colors.content
-        val bookmarkPainter = rememberVectorPainter(
-            remember(contentColor) {
-                createBookmarkOutlineVector(contentColor)
-            }
-        )
-
         LightTheme(colors = themeColors) {
             Box(
                 modifier = Modifier
@@ -163,15 +156,6 @@ class HomeScreen(
                     Column(modifier = Modifier.fillMaxSize()) {
                         LightTopBar(
                             center = LightTopBarCenter.Text("Dictionary"),
-                            rightButton = LightBarButton.Icon(
-                                painter = bookmarkPainter,
-                                contentDescription = "Saved Words",
-                                onClick = {
-                                    navigateTo(screenFactory = { act ->
-                                        BookmarksScreen(act, repository)
-                                    })
-                                }
-                            ),
                             modifier = Modifier.padding(bottom = 0.5f.gridUnitsAsDp())
                         )
 

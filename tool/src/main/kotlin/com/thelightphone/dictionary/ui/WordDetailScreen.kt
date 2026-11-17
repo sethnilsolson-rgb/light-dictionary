@@ -285,6 +285,14 @@ class WordDetailScreen(
                                                     variant = LightTextVariant.Detail,
                                                 )
                                             }
+
+                                            if (def.antonyms.isNotEmpty()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                LightText(
+                                                    text = "Antonyms: ${def.antonyms.take(4).joinToString(", ")}",
+                                                    variant = LightTextVariant.Detail,
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -292,6 +300,14 @@ class WordDetailScreen(
                                 if (meaning.synonyms.isNotEmpty() && meaning.definitions.none { it.synonyms.isNotEmpty() }) {
                                     LightText(
                                         text = "Synonyms: ${meaning.synonyms.take(5).joinToString(", ")}",
+                                        variant = LightTextVariant.Detail,
+                                        modifier = Modifier.padding(end = 1.5f.gridUnitsAsDp(), bottom = 8.dp)
+                                    )
+                                }
+
+                                if (meaning.antonyms.isNotEmpty() && meaning.definitions.none { it.antonyms.isNotEmpty() }) {
+                                    LightText(
+                                        text = "Antonyms: ${meaning.antonyms.take(5).joinToString(", ")}",
                                         variant = LightTextVariant.Detail,
                                         modifier = Modifier.padding(end = 1.5f.gridUnitsAsDp(), bottom = 8.dp)
                                     )

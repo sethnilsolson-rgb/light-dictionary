@@ -532,6 +532,79 @@ object BuiltInDictionary {
             )
         ),
         WordEntry(
+            word = "hate",
+            phonetic = "/heɪt/",
+            origin = "Old English hatian 'regard with extreme ill will', of Germanic origin; related to Dutch haten and German hassen, from Proto-Indo-European *kad- 'sorrow, hatred'.",
+            meanings = listOf(
+                WordMeaning(
+                    partOfSpeech = "verb",
+                    definitions = listOf(
+                        WordDefinition(
+                            definition = "Feel intense or passionate dislike for someone or something.",
+                            example = "He hated the thought of leaving his mountain home behind.",
+                            synonyms = listOf("loathe", "detest", "despise", "abhor", "abominate"),
+                            antonyms = listOf("love", "adore", "cherish", "admire")
+                        ),
+                        WordDefinition(
+                            definition = "Have a strong aversion to or reluctance toward doing something.",
+                            example = "I hate to interrupt your reading, but the evening train has arrived.",
+                            synonyms = listOf("dislike", "dread", "recoil from"),
+                            antonyms = listOf("enjoy", "relish", "delight in")
+                        )
+                    ),
+                    synonyms = listOf("loathe", "detest", "despise", "abhor"),
+                    antonyms = listOf("love", "cherish", "adore")
+                ),
+                WordMeaning(
+                    partOfSpeech = "noun",
+                    definitions = listOf(
+                        WordDefinition(
+                            definition = "Intense hostility and aversion usually deriving from fear, anger, or sense of injury.",
+                            example = "Her voice carried no trace of bitterness or hate.",
+                            synonyms = listOf("hatred", "loathing", "hostility", "animosity", "enmity"),
+                            antonyms = listOf("love", "affection", "goodwill", "amity")
+                        ),
+                        WordDefinition(
+                            definition = "An object of hatred or intense dislike.",
+                            example = "Unnecessary noise pollution was one of his personal pet hates.",
+                            synonyms = listOf("bugbear", "pet peeve", "bane", "anathema")
+                        )
+                    ),
+                    synonyms = listOf("hatred", "hostility", "animosity"),
+                    antonyms = listOf("love", "kindness")
+                )
+            )
+        ),
+        WordEntry(
+            word = "hope",
+            phonetic = "/həʊp/",
+            origin = "Old English hopian 'wish for, expect', of Germanic origin; related to Middle Dutch and Middle Low German hopen.",
+            meanings = listOf(
+                WordMeaning(
+                    partOfSpeech = "noun",
+                    definitions = listOf(
+                        WordDefinition(
+                            definition = "A feeling of expectation and desire for a certain thing to happen.",
+                            example = "A steadfast hope carried the family through the lean years.",
+                            synonyms = listOf("aspiration", "optimism", "expectation", "longing"),
+                            antonyms = listOf("despair", "hopelessness", "pessimism")
+                        )
+                    ),
+                    synonyms = listOf("aspiration", "optimism", "faith")
+                ),
+                WordMeaning(
+                    partOfSpeech = "verb",
+                    definitions = listOf(
+                        WordDefinition(
+                            definition = "Want something to happen or be the case.",
+                            example = "We hope to see the morning sun dispel the fog.",
+                            synonyms = listOf("anticipate", "trust", "aspire")
+                        )
+                    )
+                )
+            )
+        ),
+        WordEntry(
             word = "hubris",
             phonetic = "/ˈhjuː.brɪs/",
             origin = "Greek hubris 'excessive pride, wanton violence, outrage'.",
@@ -651,6 +724,37 @@ object BuiltInDictionary {
                             example = "The professor gave a lucid exposition of quantum entanglement that any layperson could grasp.",
                             synonyms = listOf("coherent", "intelligible", "transparent", "articulate"),
                             antonyms = listOf("confusing", "muddled", "opaque")
+                        )
+                    )
+                )
+            )
+        ),
+        WordEntry(
+            word = "love",
+            phonetic = "/lʌv/",
+            origin = "Old English lufu, of Germanic origin; related to Dutch liefde and German Liebe, from an Indo-European root shared by Sanskrit lubhyati 'desires' and Latin libet 'it pleases'.",
+            meanings = listOf(
+                WordMeaning(
+                    partOfSpeech = "noun",
+                    definitions = listOf(
+                        WordDefinition(
+                            definition = "An intense feeling of deep affection; a great interest and pleasure in something.",
+                            example = "Her love for early morning walks never waned across fifty years.",
+                            synonyms = listOf("affection", "devotion", "adoration", "warmth"),
+                            antonyms = listOf("hatred", "animosity", "indifference")
+                        )
+                    ),
+                    synonyms = listOf("affection", "devotion", "fondness"),
+                    antonyms = listOf("hate", "hostility")
+                ),
+                WordMeaning(
+                    partOfSpeech = "verb",
+                    definitions = listOf(
+                        WordDefinition(
+                            definition = "Feel deep affection or great pleasure in.",
+                            example = "He loved the smell of mountain rain on dry pine needles.",
+                            synonyms = listOf("cherish", "adore", "treasure"),
+                            antonyms = listOf("hate", "detest", "despise")
                         )
                     )
                 )

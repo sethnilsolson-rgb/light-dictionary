@@ -21,11 +21,11 @@ object DictionaryService {
             val url = URI("https://api.dictionaryapi.dev/api/v2/entries/en/$encoded").toURL()
 
             val connection = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5000
-                readTimeout = 8000
+                connectTimeout = 10000
+                readTimeout = 12000
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/json")
-                setRequestProperty("User-Agent", "LightPhone-Dictionary/1.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
             }
 
             val responseCode = connection.responseCode
