@@ -10,6 +10,12 @@ data class OfflineWordEntity(
     val definition: String,
 )
 
+@Entity(tableName = "scrabble_words")
+data class ScrabbleWordEntity(
+    @PrimaryKey
+    val word: String,
+)
+
 @Entity(tableName = "cached_words")
 data class CachedWordEntity(
     @PrimaryKey

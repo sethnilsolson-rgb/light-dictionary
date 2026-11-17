@@ -144,6 +144,44 @@ class DictionaryRepository(
             .map { it.first }
     }
 
+    suspend fun isScrabbleLegal(word: String): Boolean = withContext(Dispatchers.IO) {
+        val normalized = word.trim().lowercase()
+        if (normalized.length < 2 || normalized.any { !it.isLetter() }) return@withContext false
+        database.dictionaryDao().isScrabbleLegal(normalized)
+    }
+
+    suspend fun getSimilarWords(word: String, limit: Int = 6): List<String> = withContext(Dispatchers.IO) {
+        val q = word.trim().lowercase()
+        if (q.length < 2) return@withContext emptyList()
+
+        val candidates = mutableSetOf<String>()
+        candidates.addAll(database.dictionaryDao().getWordsStartingWith("$q%", 50))
+
+        val minLen = (q.length - 2).coerceAtLeast(2)
+        val maxLen = q.length + 4
+        val prefixes = mutableListOf<String>()
+        if (q.length >= 4) prefixes.add(q.substring(0, 4))
+        if (q.length >= 3) prefixes.add(q.substring(0, 3))
+        prefixes.add(q.substring(0, 2))
+
+        for (p in prefixes) {
+            candidates.addAll(database.dictionaryDao().getCandidateWords("$p%", minLen, maxLen))
+        }
+
+        candidates.remove(q)
+
+        candidates
+            .map { w ->
+                val startsWithQuery = if (w.startsWith(q)) 0 else 1
+                val dist = WebsterParser.levenshteinDistance(q, w)
+                Pair(w, Triple(startsWithQuery, dist, w.length))
+            }
+            .filter { it.second.second <= 3 }
+            .sortedWith(compareBy({ it.second.first }, { it.second.second }, { it.second.third }))
+            .take(limit)
+            .map { it.first }
+    }
+
     suspend fun searchWords(query: String): List<String> = withContext(Dispatchers.IO) {
         val q = query.trim().lowercase()
         if (q.isBlank()) return@withContext emptyList()

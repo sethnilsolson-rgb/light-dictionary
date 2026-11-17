@@ -111,4 +111,21 @@ object WebsterParser {
         }
         return prev[len2]
     }
+
+    fun calculateScrabbleScore(word: String): Int {
+        var score = 0
+        for (ch in word.uppercase()) {
+            score += when (ch) {
+                'A', 'E', 'I', 'L', 'N', 'O', 'R', 'S', 'T', 'U' -> 1
+                'D', 'G' -> 2
+                'B', 'C', 'M', 'P' -> 3
+                'F', 'H', 'V', 'W', 'Y' -> 4
+                'K' -> 5
+                'J', 'X' -> 8
+                'Q', 'Z' -> 10
+                else -> 0
+            }
+        }
+        return score
+    }
 }

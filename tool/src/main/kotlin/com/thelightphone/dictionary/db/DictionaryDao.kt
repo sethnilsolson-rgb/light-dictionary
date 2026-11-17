@@ -17,11 +17,18 @@ interface DictionaryDao {
     @Query("SELECT word FROM offline_words WHERE word LIKE :prefix ORDER BY length(word), word LIMIT :limit")
     suspend fun searchOfflineWords(prefix: String, limit: Int = 25): List<String>
 
+    @Query("SELECT word FROM offline_words WHERE word LIKE :prefix LIMIT :limit")
+    suspend fun getWordsStartingWith(prefix: String, limit: Int = 50): List<String>
+
     @Query("SELECT word FROM offline_words WHERE word LIKE :charPrefix AND length(word) BETWEEN :minLen AND :maxLen LIMIT 500")
     suspend fun getCandidateWords(charPrefix: String, minLen: Int, maxLen: Int): List<String>
 
     @Query("SELECT word FROM offline_words WHERE length(word) BETWEEN :minLen AND :maxLen LIMIT 1000")
     suspend fun getFallbackCandidateWords(minLen: Int, maxLen: Int): List<String>
+
+    // Scrabble
+    @Query("SELECT EXISTS(SELECT 1 FROM scrabble_words WHERE word = :word)")
+    suspend fun isScrabbleLegal(word: String): Boolean
 
     // Cached Online Words
     @Query("SELECT * FROM cached_words WHERE word = :word LIMIT 1")

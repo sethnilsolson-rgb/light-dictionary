@@ -68,6 +68,15 @@ class WordDetailViewModel(
     private val _suggestions = MutableStateFlow<List<String>>(emptyList())
     val suggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
 
+    private val _similarWords = MutableStateFlow<List<String>>(emptyList())
+    val similarWords: StateFlow<List<String>> = _similarWords.asStateFlow()
+
+    private val _isScrabbleLegal = MutableStateFlow(false)
+    val isScrabbleLegal: StateFlow<Boolean> = _isScrabbleLegal.asStateFlow()
+
+    private val _scrabbleScore = MutableStateFlow(0)
+    val scrabbleScore: StateFlow<Int> = _scrabbleScore.asStateFlow()
+
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
         loadWord(_currentWord.value)
@@ -88,9 +97,13 @@ class WordDetailViewModel(
             _entry.value = result
             if (result == null) {
                 _suggestions.value = repository.getSuggestions(word)
+                _similarWords.value = emptyList()
             } else {
                 _suggestions.value = emptyList()
+                _similarWords.value = repository.getSimilarWords(word)
             }
+            _isScrabbleLegal.value = repository.isScrabbleLegal(word)
+            _scrabbleScore.value = com.thelightphone.dictionary.data.WebsterParser.calculateScrabbleScore(word)
             _isLoading.value = false
 
             val adjacent = repository.getAdjacentWords(word)
@@ -126,6 +139,9 @@ class WordDetailScreen(
         val adjacentWords by viewModel.adjacentWords.collectAsState()
         val currentWord by viewModel.currentWord.collectAsState()
         val suggestions by viewModel.suggestions.collectAsState()
+        val similarWords by viewModel.similarWords.collectAsState()
+        val isScrabbleLegal by viewModel.isScrabbleLegal.collectAsState()
+        val scrabbleScore by viewModel.scrabbleScore.collectAsState()
 
         val contentColor = LightThemeTokens.colors.content
         val bookmarkPainter = rememberVectorPainter(
@@ -264,6 +280,24 @@ class WordDetailScreen(
                                         variant = LightTextVariant.Detail,
                                     )
                                 }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Scrabble legal badge
+                                Box(
+                                    modifier = Modifier
+                                        .border(
+                                            width = 1.dp,
+                                            color = LightThemeTokens.colors.content.copy(alpha = 0.5f),
+                                            shape = RoundedCornerShape(2.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    LightText(
+                                        text = if (isScrabbleLegal) "SCRABBLE LEGAL • ${scrabbleScore} PTS" else "NOT SCRABBLE LEGAL",
+                                        variant = LightTextVariant.Detail
+                                    )
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
@@ -369,6 +403,42 @@ class WordDetailScreen(
 
                                 if (mIdx < wordEntry.meanings.size - 1) {
                                     Spacer(modifier = Modifier.height(12.dp))
+                                }
+                            }
+
+                            // Similar words section (e.g. searching brail brings up braille)
+                            if (similarWords.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(20.dp))
+                                LightText("SIMILAR WORDS", variant = LightTextVariant.Detail)
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                similarWords.forEach { similar ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(end = 1.5f.gridUnitsAsDp())
+                                            .lightClickable { viewModel.loadWord(similar) }
+                                            .padding(vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            LightText(
+                                                text = similar,
+                                                variant = LightTextVariant.Paragraph
+                                            )
+                                        }
+                                        LightText(
+                                            text = "→",
+                                            variant = LightTextVariant.Detail
+                                        )
+                                    }
+                                    Spacer(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(end = 1.5f.gridUnitsAsDp())
+                                            .height(1.dp)
+                                            .background(LightThemeTokens.colors.content.copy(alpha = 0.2f))
+                                    )
                                 }
                             }
 
