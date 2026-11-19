@@ -16,6 +16,14 @@ data class ScrabbleWordEntity(
     val word: String,
 )
 
+@Entity(tableName = "etymologies")
+data class EtymologyEntity(
+    @PrimaryKey
+    @androidx.annotation.NonNull
+    val word: String,
+    val etymology: String,
+)
+
 @Entity(tableName = "cached_words")
 data class CachedWordEntity(
     @PrimaryKey

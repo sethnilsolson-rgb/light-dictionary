@@ -7,11 +7,12 @@ import androidx.room.RoomDatabase
     entities = [
         OfflineWordEntity::class,
         ScrabbleWordEntity::class,
+        EtymologyEntity::class,
         CachedWordEntity::class,
         BookmarkWordEntity::class,
         RecentSearchEntity::class,
     ],
-    version = 3,
+    version = 5,
     exportSchema = false,
 )
 abstract class DictionaryDatabase : RoomDatabase() {

@@ -15,14 +15,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.dictionary.data.DictionaryRepository
+import com.thelightphone.dictionary.data.WebsterParser
 import com.thelightphone.dictionary.data.WordEntry
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -40,6 +42,8 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,7 +54,7 @@ class WordDetailViewModel(
     private val repository: DictionaryRepository,
 ) : LightViewModel<Unit>() {
 
-    private val _currentWord = MutableStateFlow(initialWord)
+    private val _currentWord = MutableStateFlow(initialWord.trim())
     val currentWord: StateFlow<String> = _currentWord.asStateFlow()
 
     private val _entry = MutableStateFlow<WordEntry?>(null)
@@ -77,37 +81,79 @@ class WordDetailViewModel(
     private val _scrabbleScore = MutableStateFlow(0)
     val scrabbleScore: StateFlow<Int> = _scrabbleScore.asStateFlow()
 
+    private var loadJob: Job? = null
+    private var bookmarkJob: Job? = null
+    private var adjacentJob: Job? = null
+    private var hasInitialized = false
+
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
-        loadWord(_currentWord.value)
+        if (!hasInitialized) {
+            hasInitialized = true
+            loadWord(_currentWord.value)
+        }
     }
 
     fun loadWord(word: String) {
-        _currentWord.value = word
+        val cleanWord = word.trim()
+        loadJob?.cancel()
+        bookmarkJob?.cancel()
+        adjacentJob?.cancel()
+
+        _currentWord.value = cleanWord
+        _entry.value = null
+        _suggestions.value = emptyList()
+        _similarWords.value = emptyList()
+        _isScrabbleLegal.value = false
+        _scrabbleScore.value = 0
         _isLoading.value = true
 
-        viewModelScope.launch {
-            repository.isWordBookmarked(word).collect { bookmarked ->
-                _isBookmarked.value = bookmarked
+        bookmarkJob = viewModelScope.launch {
+            runCatching {
+                repository.isWordBookmarked(cleanWord).collect { bookmarked ->
+                    _isBookmarked.value = bookmarked
+                }
             }
         }
 
-        viewModelScope.launch {
-            val result = repository.getWord(word)
-            _entry.value = result
-            if (result == null) {
-                _suggestions.value = repository.getSuggestions(word)
-                _similarWords.value = emptyList()
-            } else {
-                _suggestions.value = emptyList()
-                _similarWords.value = repository.getSimilarWords(word)
-            }
-            _isScrabbleLegal.value = repository.isScrabbleLegal(word)
-            _scrabbleScore.value = com.thelightphone.dictionary.data.WebsterParser.calculateScrabbleScore(word)
-            _isLoading.value = false
+        adjacentJob = viewModelScope.launch {
+            _adjacentWords.value = runCatching {
+                repository.getAdjacentWords(cleanWord)
+            }.getOrDefault(Pair(null, null))
+        }
 
-            val adjacent = repository.getAdjacentWords(word)
-            _adjacentWords.value = adjacent
+        loadJob = viewModelScope.launch {
+            try {
+                var emittedValidEntry = false
+                repository.getWordFlow(cleanWord).collect { result ->
+                    if (result != null) {
+                        emittedValidEntry = true
+                        _entry.value = result
+                        _suggestions.value = emptyList()
+                        val legal = runCatching { repository.isScrabbleLegal(cleanWord) }.getOrDefault(false)
+                        _isScrabbleLegal.value = legal
+                        _scrabbleScore.value = if (legal) WebsterParser.calculateScrabbleScore(cleanWord) else 0
+                        _isLoading.value = false
+                        // Fetch similar words without delaying main definition display
+                        _similarWords.value = runCatching { repository.getSimilarWords(cleanWord) }.getOrDefault(emptyList())
+                    } else if (!emittedValidEntry) {
+                        _entry.value = null
+                        _similarWords.value = emptyList()
+                        _isScrabbleLegal.value = false
+                        _scrabbleScore.value = 0
+                        _suggestions.value = runCatching { repository.getSuggestions(cleanWord) }.getOrDefault(emptyList())
+                        _isLoading.value = false
+                    }
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                if (_entry.value == null) {
+                    _suggestions.value = runCatching { repository.getSuggestions(cleanWord) }.getOrDefault(emptyList())
+                }
+            } finally {
+                _isLoading.value = false
+            }
         }
     }
 
@@ -156,6 +202,9 @@ class WordDetailScreen(
 
         val prevWord = adjacentWords.first
         val nextWord = adjacentWords.second
+
+        // Reset origin dropdown cleanly whenever switching to a new word
+        var originExpanded by remember(currentWord) { mutableStateOf(false) }
 
         LightTheme(colors = themeColors) {
             Box(
@@ -294,7 +343,7 @@ class WordDetailScreen(
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     LightText(
-                                        text = if (isScrabbleLegal) "SCRABBLE LEGAL • ${scrabbleScore} PTS" else "NOT SCRABBLE LEGAL",
+                                        text = if (isScrabbleLegal) "SCRABBLE LEGAL • $scrabbleScore PTS" else "NOT SCRABBLE LEGAL",
                                         variant = LightTextVariant.Detail
                                     )
                                 }
@@ -302,19 +351,42 @@ class WordDetailScreen(
 
                             Spacer(modifier = Modifier.height(14.dp))
 
-                            // Origin / Etymology (if available)
+                            // Origin / Etymology dropdown (if available)
                             if (wordEntry.origin.isNotBlank()) {
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(end = 1.5f.gridUnitsAsDp())
+                                        .border(
+                                            width = 1.dp,
+                                            color = LightThemeTokens.colors.content.copy(alpha = 0.35f),
+                                            shape = RoundedCornerShape(3.dp)
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
-                                    LightText("ORIGIN", variant = LightTextVariant.Detail)
-                                    Spacer(modifier = Modifier.height(3.dp))
-                                    LightText(
-                                        text = wordEntry.origin,
-                                        variant = LightTextVariant.Paragraph,
-                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .lightClickable { originExpanded = !originExpanded }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        LightText("ORIGIN / WORD ROOT", variant = LightTextVariant.Detail)
+                                        Spacer(modifier = Modifier.weight(1f))
+                                        LightText(
+                                            text = if (originExpanded) "▲" else "▼",
+                                            variant = LightTextVariant.Detail
+                                        )
+                                    }
+
+                                    if (originExpanded) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        LightText(
+                                            text = wordEntry.origin,
+                                            variant = LightTextVariant.Paragraph,
+                                            modifier = Modifier.padding(bottom = 4.dp)
+                                        )
+                                    }
                                 }
                                 Spacer(modifier = Modifier.height(16.dp))
                             }
@@ -406,7 +478,7 @@ class WordDetailScreen(
                                 }
                             }
 
-                            // Similar words section (e.g. searching brail brings up braille)
+                            // Similar words section (e.g. searching brail also shows braille)
                             if (similarWords.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(20.dp))
                                 LightText("SIMILAR WORDS", variant = LightTextVariant.Detail)

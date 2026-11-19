@@ -14,6 +14,15 @@ interface DictionaryDao {
     @Query("SELECT * FROM offline_words WHERE word = :word LIMIT 1")
     suspend fun getOfflineWord(word: String): OfflineWordEntity?
 
+    @Query("SELECT word FROM offline_words WHERE word < :word ORDER BY word DESC LIMIT 1")
+    suspend fun getPrevOfflineWord(word: String): String?
+
+    @Query("SELECT word FROM offline_words WHERE word > :word ORDER BY word ASC LIMIT 1")
+    suspend fun getNextOfflineWord(word: String): String?
+
+    @Query("SELECT etymology FROM etymologies WHERE word = :word LIMIT 1")
+    suspend fun getEtymology(word: String): String?
+
     @Query("SELECT word FROM offline_words WHERE word LIKE :prefix ORDER BY length(word), word LIMIT :limit")
     suspend fun searchOfflineWords(prefix: String, limit: Int = 25): List<String>
 

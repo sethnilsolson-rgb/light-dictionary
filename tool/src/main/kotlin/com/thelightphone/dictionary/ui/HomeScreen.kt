@@ -9,14 +9,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.dictionary.data.DictionaryRepository
@@ -29,7 +28,6 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.buildDatabase
 import com.thelightphone.sdk.rememberKeyboardOptions
-import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
@@ -43,6 +41,7 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -61,14 +60,19 @@ class HomeScreenViewModel(
     private val _bookmarkCount = MutableStateFlow(0)
     val bookmarkCount: StateFlow<Int> = _bookmarkCount.asStateFlow()
 
+    private var recentJob: Job? = null
+    private var bookmarkJob: Job? = null
+
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
-        viewModelScope.launch {
+        recentJob?.cancel()
+        recentJob = viewModelScope.launch {
             repository.recentSearches.collect { list ->
                 _recentSearches.value = list
             }
         }
-        viewModelScope.launch {
+        bookmarkJob?.cancel()
+        bookmarkJob = viewModelScope.launch {
             repository.bookmarkCount.collect { count ->
                 _bookmarkCount.value = count
             }
@@ -91,7 +95,7 @@ class HomeScreenViewModel(
 
     fun deleteRecentSearch(word: String) {
         viewModelScope.launch {
-            repository.recordRecentSearch(word) // dao has deleteRecentSearch
+            repository.deleteRecentSearch(word)
         }
     }
 }
@@ -145,6 +149,7 @@ class HomeScreen(
                             val query = charSeq.toString().trim()
                             if (query.isNotBlank()) {
                                 viewModel.stopSearch()
+                                searchFieldState.clearText()
                                 navigateTo(screenFactory = { act ->
                                     WordDetailScreen(act, query, repository)
                                 })
@@ -180,7 +185,10 @@ class HomeScreen(
                                     label = "",
                                     value = "",
                                     placeholder = "Search a word...",
-                                    onClick = { viewModel.startSearch() },
+                                    onClick = {
+                                        searchFieldState.clearText()
+                                        viewModel.startSearch()
+                                    },
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }

@@ -2,6 +2,8 @@ package com.thelightphone.dictionary.data
 
 object WebsterParser {
 
+    private val leadingTagRegex = Regex("""^\(([^)]*)\)\s*""")
+
     fun parse(word: String, raw: String): WordEntry {
         val paragraphs = raw.split("\n\n").map { it.trim() }.filter { it.isNotBlank() }
         val meanings = mutableListOf<WordMeaning>()
@@ -9,38 +11,57 @@ object WebsterParser {
         paragraphs.forEach { para ->
             var pos = "definition"
             var cleanPara = para
-            val lower = para.lowercase()
-            when {
-                lower.startsWith("n.") || lower.contains("(n.)") -> {
-                    pos = "noun"
-                    cleanPara = cleanPara.replaceFirst(Regex("^n\\.\\s*|\\(n\\.\\)\\s*"), "")
-                }
-                lower.startsWith("v.") || lower.contains("(v. t.)") || lower.contains("(v. i.)") || lower.contains("(v.)") -> {
-                    pos = "verb"
-                    cleanPara = cleanPara.replaceFirst(Regex("^v\\.\\s*|\\(v\\.\\w*\\.?\\)\\s*"), "")
-                }
-                lower.startsWith("a.") || lower.contains("(a.)") || lower.contains("(adj.)") -> {
-                    pos = "adjective"
-                    cleanPara = cleanPara.replaceFirst(Regex("^a\\.\\s*|\\(a\\.\\)\\s*|\\(adj\\.\\)\\s*"), "")
-                }
-                lower.startsWith("adv.") || lower.contains("(adv.)") -> {
-                    pos = "adverb"
-                    cleanPara = cleanPara.replaceFirst(Regex("^adv\\.\\s*|\\(adv\\.\\)\\s*"), "")
+
+            val tagMatch = leadingTagRegex.find(cleanPara)
+            if (tagMatch != null) {
+                val rawTag = tagMatch.groupValues[1].trim().lowercase()
+                pos = mapPosTag(rawTag)
+                cleanPara = cleanPara.substring(tagMatch.range.last + 1).trim()
+            } else {
+                val lower = cleanPara.lowercase()
+                when {
+                    lower.startsWith("n. ") -> {
+                        pos = "noun"
+                        cleanPara = cleanPara.removeRange(0, 3).trim()
+                    }
+                    lower.startsWith("v. t. ") || lower.startsWith("v. i. ") -> {
+                        pos = "verb"
+                        cleanPara = cleanPara.removeRange(0, 6).trim()
+                    }
+                    lower.startsWith("v. ") -> {
+                        pos = "verb"
+                        cleanPara = cleanPara.removeRange(0, 3).trim()
+                    }
+                    lower.startsWith("adj. ") -> {
+                        pos = "adjective"
+                        cleanPara = cleanPara.removeRange(0, 5).trim()
+                    }
+                    lower.startsWith("a. ") -> {
+                        pos = "adjective"
+                        cleanPara = cleanPara.removeRange(0, 3).trim()
+                    }
+                    lower.startsWith("adv. ") -> {
+                        pos = "adverb"
+                        cleanPara = cleanPara.removeRange(0, 5).trim()
+                    }
                 }
             }
 
+            // Skip bare inflection stubs like "of Run" when richer definitions exist
+            if (cleanPara.isBlank()) return@forEach
+
             var synonymsList = emptyList<String>()
-            val synSplit = cleanPara.split(Regex("Syn\\.\\s*--|Synonyms?:", RegexOption.IGNORE_CASE))
+            val synSplit = cleanPara.split(Regex("""Syn\.\s*--|Synonyms?:""", RegexOption.IGNORE_CASE))
             if (synSplit.size > 1) {
                 cleanPara = synSplit[0].trim()
                 val synText = synSplit[1].trim()
-                synonymsList = synText.split(Regex("[,;\\.]"))
+                synonymsList = synText.split(Regex("""[,;\.]"""))
                     .map { it.trim().trim('-', ' ') }
                     .filter { it.isNotBlank() && it.length > 1 && !it.contains(" ") }
                     .take(6)
             }
 
-            val numMatches = Regex("(\\d+\\.)\\s+").findAll(cleanPara).toList()
+            val numMatches = Regex("""(\d+\.)\s+""").findAll(cleanPara).toList()
             val defs = mutableListOf<WordDefinition>()
 
             if (numMatches.size > 1) {
@@ -49,11 +70,15 @@ object WebsterParser {
                     val end = if (i < numMatches.lastIndex) numMatches[i + 1].range.first else cleanPara.length
                     val defSnippet = cleanPara.substring(start, end).trim()
                     if (defSnippet.isNotBlank()) {
-                        defs.add(WordDefinition(definition = defSnippet))
+                        val (extractedDef, extractedExample) = extractExample(defSnippet)
+                        defs.add(WordDefinition(definition = extractedDef, example = extractedExample))
                     }
                 }
             } else {
-                defs.add(WordDefinition(definition = cleanPara))
+                val (extractedDef, extractedExample) = extractExample(cleanPara)
+                if (extractedDef.isNotBlank()) {
+                    defs.add(WordDefinition(definition = extractedDef, example = extractedExample))
+                }
             }
 
             if (defs.isNotEmpty()) {
@@ -67,11 +92,23 @@ object WebsterParser {
             }
         }
 
-        if (meanings.isEmpty()) {
-            meanings.add(
-                WordMeaning(
-                    partOfSpeech = "definition",
-                    definitions = listOf(WordDefinition(definition = raw))
+        // If we have full definitions alongside bare "of Word" inflection stubs, filter out the stubs
+        val substantiveMeanings = meanings.filterNot { m ->
+            m.definitions.size == 1 && Regex("""^of\s+\S+$""", RegexOption.IGNORE_CASE)
+                .matches(m.definitions.first().definition.trim())
+        }
+        val finalMeanings = substantiveMeanings.ifEmpty { meanings }
+
+        if (finalMeanings.isEmpty()) {
+            return WordEntry(
+                word = word,
+                phonetic = "",
+                origin = "",
+                meanings = listOf(
+                    WordMeaning(
+                        partOfSpeech = "definition",
+                        definitions = listOf(WordDefinition(definition = raw.trim()))
+                    )
                 )
             )
         }
@@ -80,8 +117,45 @@ object WebsterParser {
             word = word,
             phonetic = "",
             origin = "",
-            meanings = meanings
+            meanings = finalMeanings
         )
+    }
+
+    private fun mapPosTag(rawTag: String): String {
+        return when {
+            rawTag.isBlank() -> "definition"
+            rawTag == "n." || rawTag == "n" || rawTag.startsWith("n.") || rawTag == "pl." -> "noun"
+            rawTag.startsWith("v.") || rawTag == "v" || rawTag == "imp." || rawTag.startsWith("p. p") || rawTag.startsWith("p. pr") -> "verb"
+            rawTag == "a." || rawTag == "a" || rawTag.startsWith("adj") || rawTag.startsWith("superl") || rawTag.startsWith("comp") -> "adjective"
+            rawTag.startsWith("adv") -> "adverb"
+            rawTag.startsWith("prep") -> "preposition"
+            rawTag.startsWith("conj") -> "conjunction"
+            rawTag.startsWith("interj") -> "interjection"
+            rawTag.startsWith("pron") -> "pronoun"
+            rawTag.startsWith("pref") -> "prefix"
+            rawTag.startsWith("suf") -> "suffix"
+            else -> "definition"
+        }
+    }
+
+    private fun extractExample(snippet: String): Pair<String, String?> {
+        val markers = listOf("; as, ", "; as ", ": as, ")
+        for (marker in markers) {
+            val idx = snippet.indexOf(marker)
+            if (idx != -1) {
+                val def = snippet.substring(0, idx).trim()
+                val ex = snippet.substring(idx + marker.length).trim().trim('"')
+                if (def.isNotBlank()) {
+                    return Pair(def, ex.takeIf { it.isNotBlank() })
+                }
+            }
+        }
+        val quoteRegex = Regex("""^(.*?)\s*"([^"]+)"\s*$""")
+        val match = quoteRegex.find(snippet)
+        if (match != null && match.groupValues[1].trim().isNotBlank()) {
+            return Pair(match.groupValues[1].trim(), match.groupValues[2].trim())
+        }
+        return Pair(snippet, null)
     }
 
     fun levenshteinDistance(s1: String, s2: String): Int {
@@ -114,7 +188,7 @@ object WebsterParser {
 
     fun calculateScrabbleScore(word: String): Int {
         var score = 0
-        for (ch in word.uppercase()) {
+        for (ch in word.trim().uppercase()) {
             score += when (ch) {
                 'A', 'E', 'I', 'L', 'N', 'O', 'R', 'S', 'T', 'U' -> 1
                 'D', 'G' -> 2

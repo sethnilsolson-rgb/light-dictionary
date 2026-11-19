@@ -6,7 +6,10 @@ import com.thelightphone.dictionary.db.DictionaryDatabase
 import com.thelightphone.dictionary.db.RecentSearchEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -55,89 +58,141 @@ class DictionaryRepository(
         )
     }
 
+    suspend fun deleteRecentSearch(word: String) {
+        if (word.isBlank()) return
+        database.dictionaryDao().deleteRecentSearch(word.trim().lowercase())
+    }
+
     suspend fun clearRecentSearches() {
         database.dictionaryDao().clearRecentSearches()
     }
 
-    suspend fun getWord(word: String): WordEntry? = withContext(Dispatchers.IO) {
+    /**
+     * Emits an instant offline definition (0ms) when available, then optionally enriches with
+     * online phonetics/examples/modern meanings. Strictly runs on [Dispatchers.IO] and is
+     * guaranteed to always emit and terminate cleanly without hanging.
+     */
+    fun getWordFlow(word: String): Flow<WordEntry?> = flow {
         val normalized = word.trim().lowercase()
-        if (normalized.isBlank()) return@withContext null
+        if (normalized.isBlank()) {
+            emit(null)
+            return@flow
+        }
+
+        val dao = database.dictionaryDao()
+        val offlineEtymology = runCatching { dao.getEtymology(normalized) }.getOrNull().orEmpty()
 
         // 1. Check curated built-in dictionary
         val builtIn = BuiltInDictionary.find(normalized)
         if (builtIn != null) {
             recordRecentSearch(normalized)
-            return@withContext builtIn
+            val origin = builtIn.origin.ifBlank { offlineEtymology }
+            emit(builtIn.copy(origin = origin))
+            return@flow
         }
 
-        // 2. Check local database cache
-        val cached = database.dictionaryDao().getCachedWord(normalized)
+        // 2. Check local database cache (from previous online lookups)
+        val cached = runCatching { dao.getCachedWord(normalized) }.getOrNull()
         if (cached != null) {
             val meanings = runCatching {
                 json.decodeFromString<List<WordMeaning>>(cached.meaningsJson)
             }.getOrDefault(emptyList())
 
-            recordRecentSearch(normalized)
-            return@withContext WordEntry(
-                word = cached.word,
-                phonetic = cached.phonetic,
-                origin = cached.origin,
-                meanings = meanings,
-            )
+            if (meanings.isNotEmpty()) {
+                recordRecentSearch(normalized)
+                val origin = cached.origin.ifBlank { offlineEtymology }
+                emit(
+                    WordEntry(
+                        word = cached.word,
+                        phonetic = cached.phonetic,
+                        origin = origin,
+                        meanings = meanings,
+                    )
+                )
+                return@flow
+            }
         }
 
-        // 3. Check extensive offline dictionary (over 100,000 words, 0ms latency)
-        val offline = database.dictionaryDao().getOfflineWord(normalized)
+        // 3. Check 110k+ offline dictionary (0ms latency)
+        val offline = runCatching { dao.getOfflineWord(normalized) }.getOrNull()
+        val isScrabble = if (offline == null) {
+            isScrabbleLegalSync(normalized)
+        } else {
+            false
+        }
+
         if (offline != null) {
             recordRecentSearch(normalized)
-            return@withContext WebsterParser.parse(offline.word, offline.definition)
-        }
-
-        // 4. Check if word is a recognized English word in Scrabble tournament lexicon
-        val isScrabble = database.dictionaryDao().isScrabbleLegal(normalized)
-        if (!isScrabble) {
-            // Not in Webster (102k words) and not in Scrabble (83k words) -> typo or non-word!
-            // Skip network entirely to avoid blocking the user on "Looking up..."
-            return@withContext null
-        }
-
-        // 5. Valid English word: attempt online fetch for definitions
-        val result = DictionaryService.fetchWordOnline(normalized)
-        val fetched = result.getOrNull()
-        if (fetched != null) {
-            val meaningsJson = json.encodeToString(fetched.meanings)
-            database.dictionaryDao().insertCachedWord(
-                CachedWordEntity(
-                    word = fetched.word.lowercase(),
-                    phonetic = fetched.phonetic,
-                    origin = fetched.origin,
-                    meaningsJson = meaningsJson,
-                )
-            )
+            val parsed = WebsterParser.parse(offline.word, offline.definition)
+            emit(parsed.copy(origin = offlineEtymology))
+        } else if (isScrabble) {
+            // 4. Valid 2-15 letter TWL06 Scrabble word without a Webster entry: emit immediately
             recordRecentSearch(normalized)
-            return@withContext fetched
-        }
-
-        // 6. Offline fallback for Scrabble word when network is unavailable
-        recordRecentSearch(normalized)
-        WordEntry(
-            word = normalized,
-            phonetic = "",
-            origin = "Tournament word list",
-            meanings = listOf(
-                WordMeaning(
-                    partOfSpeech = "word",
-                    definitions = listOf(
-                        WordDefinition(
-                            definition = "Valid English word (Scrabble tournament verified). Connect to network to fetch full definitions and examples."
+            emit(
+                WordEntry(
+                    word = normalized,
+                    phonetic = "",
+                    origin = offlineEtymology,
+                    meanings = listOf(
+                        WordMeaning(
+                            partOfSpeech = "word",
+                            definitions = listOf(
+                                WordDefinition(
+                                    definition = "Valid English word (official Scrabble tournament lexicon). Connect to the internet for full modern definitions and examples."
+                                )
+                            )
                         )
                     )
                 )
             )
-        )
+        } else {
+            // Not in offline_words or 178k scrabble_words.
+            // Try a short bounded online lookup (2.5s max) for modern words (e.g. "podcast", "emoji"),
+            // while guaranteeing typos like "crilll" fail fast and never hang.
+            val onlineModern = withTimeoutOrNull(2500L) {
+                DictionaryService.fetchWordOnline(normalized).getOrNull()
+            }
+            if (onlineModern != null && onlineModern.meanings.isNotEmpty()) {
+                val finalEntry = onlineModern.copy(origin = onlineModern.origin.ifBlank { offlineEtymology })
+                recordRecentSearch(normalized)
+                runCatching {
+                    dao.insertCachedWord(
+                        CachedWordEntity(
+                            word = finalEntry.word.lowercase(),
+                            phonetic = finalEntry.phonetic,
+                            origin = finalEntry.origin,
+                            meaningsJson = json.encodeToString(finalEntry.meanings),
+                        )
+                    )
+                }
+                emit(finalEntry)
+            } else {
+                emit(null)
+            }
+            return@flow
+        }
 
-        null
-    }
+        // 5. Background enrichment for offline/Scrabble words (never blocks initial render)
+        val fetched = runCatching {
+            DictionaryService.fetchWordOnline(normalized).getOrNull()
+        }.getOrNull()
+
+        if (fetched != null && fetched.meanings.isNotEmpty()) {
+            val finalOrigin = fetched.origin.ifBlank { offlineEtymology }
+            val finalFetched = fetched.copy(origin = finalOrigin)
+            runCatching {
+                dao.insertCachedWord(
+                    CachedWordEntity(
+                        word = finalFetched.word.lowercase(),
+                        phonetic = finalFetched.phonetic,
+                        origin = finalFetched.origin,
+                        meaningsJson = json.encodeToString(finalFetched.meanings),
+                    )
+                )
+            }
+            emit(finalFetched)
+        }
+    }.flowOn(Dispatchers.IO)
 
     suspend fun getSuggestions(word: String): List<String> = withContext(Dispatchers.IO) {
         val q = word.trim().lowercase()
@@ -154,7 +209,7 @@ class DictionaryRepository(
         for (base in listOf(q, collapsed, single)) {
             if (base.length >= 4) prefixes.add(base.substring(0, 4))
             if (base.length >= 3) prefixes.add(base.substring(0, 3))
-            prefixes.add(base.substring(0, 2))
+            if (base.length >= 2) prefixes.add(base.substring(0, 2))
         }
 
         // 2. Phonetic variations on prefixes
@@ -184,24 +239,25 @@ class DictionaryRepository(
         prefixes.addAll(phoneticPrefixes)
 
         val candidates = mutableSetOf<String>()
+        val dao = database.dictionaryDao()
 
         // 3. Query candidate prefixes across offline_words and scrabble_words
         for (p in prefixes) {
-            candidates.addAll(database.dictionaryDao().getCandidateWords("$p%", minLen, maxLen))
-            candidates.addAll(database.dictionaryDao().getScrabbleCandidateWords("$p%", minLen, maxLen))
+            candidates.addAll(dao.getCandidateWords("$p%", minLen, maxLen))
+            candidates.addAll(dao.getScrabbleCandidateWords("$p%", minLen, maxLen))
         }
 
         // 4. Query candidate suffixes across offline_words and scrabble_words (e.g. "...ill")
-        for (base in listOf(collapsed, q)) {
+        for (base in listOf(collapsed, single, q)) {
             if (base.length >= 4) {
                 val suf = base.takeLast(3)
-                candidates.addAll(database.dictionaryDao().getCandidateWordsBySuffix("%$suf", minLen, maxLen))
-                candidates.addAll(database.dictionaryDao().getScrabbleWordsBySuffix("%$suf", minLen, maxLen))
+                candidates.addAll(dao.getCandidateWordsBySuffix("%$suf", minLen, maxLen))
+                candidates.addAll(dao.getScrabbleWordsBySuffix("%$suf", minLen, maxLen))
             }
         }
 
-        val builtInWords = BuiltInDictionary.entries.map { it.word }
-        candidates.addAll(builtInWords)
+        candidates.addAll(BuiltInDictionary.entries.map { it.word })
+        candidates.remove(q)
 
         // 5. Score candidates with Levenshtein distance against q, collapsed, and single
         val scored = candidates
@@ -225,7 +281,10 @@ class DictionaryRepository(
             return@withContext scored.take(8)
         }
 
-        // Fallback for extreme typos (distance <= 4)
+        // Fallback for extreme typos (distance <= 4, plus same-first-letter candidates)
+        if (q.first().isLetter()) {
+            candidates.addAll(dao.getCandidateWords("${q.first()}%", minLen, maxLen))
+        }
         val fallbackScored = candidates
             .map { w ->
                 val dist = minOf(
@@ -246,18 +305,22 @@ class DictionaryRepository(
         fallbackScored.take(8)
     }
 
+    private suspend fun isScrabbleLegalSync(normalized: String): Boolean {
+        if (normalized.length !in 2..15 || normalized.any { it !in 'a'..'z' }) return false
+        return runCatching { database.dictionaryDao().isScrabbleLegal(normalized) }.getOrDefault(false)
+    }
+
     suspend fun isScrabbleLegal(word: String): Boolean = withContext(Dispatchers.IO) {
-        val normalized = word.trim().lowercase()
-        if (normalized.length < 2 || normalized.any { !it.isLetter() }) return@withContext false
-        database.dictionaryDao().isScrabbleLegal(normalized)
+        isScrabbleLegalSync(word.trim().lowercase())
     }
 
     suspend fun getSimilarWords(word: String, limit: Int = 6): List<String> = withContext(Dispatchers.IO) {
         val q = word.trim().lowercase()
         if (q.length < 2) return@withContext emptyList()
 
+        val dao = database.dictionaryDao()
         val candidates = mutableSetOf<String>()
-        candidates.addAll(database.dictionaryDao().getWordsStartingWith("$q%", 50))
+        candidates.addAll(dao.getWordsStartingWith("$q%", 50))
 
         val minLen = (q.length - 2).coerceAtLeast(2)
         val maxLen = q.length + 4
@@ -267,8 +330,8 @@ class DictionaryRepository(
         prefixes.add(q.substring(0, 2))
 
         for (p in prefixes) {
-            candidates.addAll(database.dictionaryDao().getCandidateWords("$p%", minLen, maxLen))
-            candidates.addAll(database.dictionaryDao().getScrabbleCandidateWords("$p%", minLen, maxLen))
+            candidates.addAll(dao.getCandidateWords("$p%", minLen, maxLen))
+            candidates.addAll(dao.getScrabbleCandidateWords("$p%", minLen, maxLen))
         }
 
         candidates.remove(q)
@@ -307,23 +370,25 @@ class DictionaryRepository(
         (builtIn + cached).distinct().sorted()
     }
 
+    /**
+     * Finds the true alphabetical previous and next words across the full 110,000+ offline dictionary.
+     */
     suspend fun getAdjacentWords(currentWord: String): Pair<String?, String?> = withContext(Dispatchers.IO) {
-        val list = getAllKnownWordsAlphabetical()
         val normalized = currentWord.trim().lowercase()
+        if (normalized.isBlank()) return@withContext Pair(null, null)
+        val dao = database.dictionaryDao()
+        val prev = runCatching { dao.getPrevOfflineWord(normalized) }.getOrNull()
+        val next = runCatching { dao.getNextOfflineWord(normalized) }.getOrNull()
+        if (prev != null || next != null) {
+            return@withContext Pair(prev, next)
+        }
+        // Fallback to built-in index if needed
+        val list = getAllKnownWordsAlphabetical()
         val idx = list.indexOf(normalized)
-
         if (idx != -1) {
-            val prev = if (idx > 0) list[idx - 1] else null
-            val next = if (idx < list.size - 1) list[idx + 1] else null
-            Pair(prev, next)
+            Pair(list.getOrNull(idx - 1), list.getOrNull(idx + 1))
         } else {
-            var insertionIdx = list.binarySearch(normalized)
-            if (insertionIdx < 0) {
-                insertionIdx = -(insertionIdx + 1)
-            }
-            val prev = if (insertionIdx > 0) list[insertionIdx - 1] else null
-            val next = if (insertionIdx < list.size) list[insertionIdx] else null
-            Pair(prev, next)
+            Pair(null, null)
         }
     }
 

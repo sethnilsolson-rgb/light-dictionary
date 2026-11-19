@@ -17,7 +17,7 @@ object DictionaryService {
     }
 
     suspend fun fetchWordOnline(word: String): Result<WordEntry> = withContext(Dispatchers.IO) {
-        val entry = withTimeoutOrNull(2000L) {
+        val entry = withTimeoutOrNull(6000L) {
             runCatching {
                 var connection: HttpURLConnection? = null
                 try {
@@ -25,8 +25,8 @@ object DictionaryService {
                     val url = URI("https://api.dictionaryapi.dev/api/v2/entries/en/$encoded").toURL()
 
                     connection = (url.openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 1500
-                        readTimeout = 1500
+                        connectTimeout = 3000
+                        readTimeout = 5000
                         requestMethod = "GET"
                         setRequestProperty("Accept", "application/json")
                         setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
