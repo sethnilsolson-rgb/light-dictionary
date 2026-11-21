@@ -371,6 +371,77 @@ class DictionaryRepository(
     }
 
     /**
+     * Fast inline lookup for press-and-hold word definitions inside a definition, example,
+     * or origin text. Checks Built-in, Cached, and 110k+ Offline entries with English
+     * stemming first (0ms), then falls back to a bounded online lookup if needed, without
+     * polluting recent searches.
+     */
+    suspend fun quickLookupWord(rawWord: String): WordEntry? = withContext(Dispatchers.IO) {
+        val cleaned = rawWord.trim().trim('\'', '’', '-', '.', ',', ';', ':').lowercase()
+        if (cleaned.isBlank()) return@withContext null
+
+        val dao = database.dictionaryDao()
+        val candidates = buildEnglishCandidates(cleaned)
+
+        // 1. Instant offline pass across Built-in -> Cached -> 110k+ Offline DB
+        for (candidate in candidates) {
+            BuiltInDictionary.find(candidate)?.let { builtIn ->
+                val etym = builtIn.origin.ifBlank { runCatching { dao.getEtymology(candidate) }.getOrNull().orEmpty() }
+                return@withContext builtIn.copy(origin = etym)
+            }
+
+            val cached = runCatching { dao.getCachedWord(candidate) }.getOrNull()
+            if (cached != null) {
+                val meanings = runCatching {
+                    json.decodeFromString<List<WordMeaning>>(cached.meaningsJson)
+                }.getOrDefault(emptyList())
+                if (meanings.isNotEmpty()) {
+                    val etym = cached.origin.ifBlank { runCatching { dao.getEtymology(candidate) }.getOrNull().orEmpty() }
+                    return@withContext WordEntry(
+                        word = cached.word,
+                        phonetic = cached.phonetic,
+                        origin = etym,
+                        meanings = meanings,
+                    )
+                }
+            }
+
+            val offline = runCatching { dao.getOfflineWord(candidate) }.getOrNull()
+            if (offline != null) {
+                val parsed = WebsterParser.parse(offline.word, offline.definition)
+                if (parsed.meanings.isNotEmpty()) {
+                    val etym = runCatching { dao.getEtymology(candidate) }.getOrNull().orEmpty()
+                    return@withContext parsed.copy(origin = etym)
+                }
+            }
+        }
+
+        // 2. Bounded online fallback for modern words not in the offline lexicon
+        for (candidate in candidates.take(2)) {
+            val online = withTimeoutOrNull(2500L) {
+                DictionaryService.fetchWordOnline(candidate).getOrNull()
+            }
+            if (online != null && online.meanings.isNotEmpty()) {
+                val etym = online.origin.ifBlank { runCatching { dao.getEtymology(candidate) }.getOrNull().orEmpty() }
+                val finalEntry = online.copy(origin = etym)
+                runCatching {
+                    dao.insertCachedWord(
+                        CachedWordEntity(
+                            word = finalEntry.word.lowercase(),
+                            phonetic = finalEntry.phonetic,
+                            origin = finalEntry.origin,
+                            meaningsJson = json.encodeToString(finalEntry.meanings),
+                        )
+                    )
+                }
+                return@withContext finalEntry
+            }
+        }
+
+        null
+    }
+
+    /**
      * Finds the true alphabetical previous and next words across the full 110,000+ offline dictionary.
      */
     suspend fun getAdjacentWords(currentWord: String): Pair<String?, String?> = withContext(Dispatchers.IO) {
@@ -405,5 +476,55 @@ class DictionaryRepository(
                 instance ?: DictionaryRepository(dbProvider()).also { instance = it }
             }
         }
+
+        fun extractWordAt(text: String, charIndex: Int): String? {
+            if (text.isEmpty()) return null
+            var idx = charIndex.coerceIn(0, text.lastIndex)
+            if (!isWordChar(text[idx])) {
+                if (idx > 0 && isWordChar(text[idx - 1])) idx--
+                else if (idx + 1 < text.length && isWordChar(text[idx + 1])) idx++
+                else return null
+            }
+            var start = idx
+            while (start > 0 && isWordChar(text[start - 1])) start--
+            var end = idx
+            while (end + 1 < text.length && isWordChar(text[end + 1])) end++
+            return text.substring(start, end + 1).trim('\'', '-', '’').takeIf { it.isNotBlank() }
+        }
+
+        fun buildEnglishCandidates(normalized: String): List<String> {
+            val list = LinkedHashSet<String>()
+            list.add(normalized)
+            if (normalized.endsWith("ies") && normalized.length > 4) list.add(normalized.dropLast(3) + "y")
+            if (normalized.endsWith("ied") && normalized.length > 4) list.add(normalized.dropLast(3) + "y")
+            if (normalized.endsWith("ing") && normalized.length > 5) {
+                val stem = normalized.dropLast(3)
+                list.add(stem)
+                list.add(stem + "e")
+                if (stem.length >= 2 && stem.last() == stem[stem.lastIndex - 1]) list.add(stem.dropLast(1))
+            }
+            if (normalized.endsWith("ed") && normalized.length > 4) {
+                val stem = normalized.dropLast(2)
+                list.add(stem)
+                list.add(stem + "e")
+                if (stem.length >= 2 && stem.last() == stem[stem.lastIndex - 1]) list.add(stem.dropLast(1))
+            }
+            if (normalized.endsWith("ly") && normalized.length > 4) list.add(normalized.dropLast(2))
+            if (normalized.endsWith("est") && normalized.length > 4) {
+                list.add(normalized.dropLast(3))
+                list.add(normalized.dropLast(3) + "e")
+            }
+            if (normalized.endsWith("er") && normalized.length > 4) {
+                list.add(normalized.dropLast(2))
+                list.add(normalized.dropLast(2) + "e")
+            }
+            if (normalized.endsWith("es") && normalized.length > 3) list.add(normalized.dropLast(2))
+            if (normalized.endsWith("s") && normalized.length > 3 && !normalized.endsWith("ss")) {
+                list.add(normalized.dropLast(1))
+            }
+            return list.toList()
+        }
+
+        private fun isWordChar(c: Char): Boolean = c.isLetter() || c == '\'' || c == '’' || c == '-'
     }
 }

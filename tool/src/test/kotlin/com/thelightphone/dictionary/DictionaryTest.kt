@@ -122,4 +122,20 @@ class DictionaryTest {
         assertTrue(sizeMb > 10.0, "offline_dictionary.db should contain full lexicon, got $sizeMb MB")
         assertTrue(sizeMb < 50.0, "offline_dictionary.db must stay under 50MB for clean GitHub pushes, got $sizeMb MB")
     }
+
+    @Test
+    fun testInlinePressAndHoldWordExtractionAndStemming() {
+        val def = "Marked by unwavering tenacity; enduringly resilient."
+        assertEquals("tenacity", com.thelightphone.dictionary.data.DictionaryRepository.extractWordAt(def, 24))
+        assertEquals("resilient", com.thelightphone.dictionary.data.DictionaryRepository.extractWordAt(def, def.length - 2))
+
+        val running = com.thelightphone.dictionary.data.DictionaryRepository.buildEnglishCandidates("running")
+        assertTrue(running.contains("run"), "Expected stem 'run' in $running")
+
+        val enduringly = com.thelightphone.dictionary.data.DictionaryRepository.buildEnglishCandidates("enduringly")
+        assertTrue(enduringly.contains("enduring"), "Expected stem 'enduring' in $enduringly")
+
+        val carried = com.thelightphone.dictionary.data.DictionaryRepository.buildEnglishCandidates("carried")
+        assertTrue(carried.contains("carry"), "Expected stem 'carry' in $carried")
+    }
 }
