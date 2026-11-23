@@ -111,7 +111,49 @@ class HomeScreen(
                 DictionaryDatabase::class.java,
                 DictionaryRepository.DATABASE_NAME
             ) {
-                createFromAsset("offline_dictionary.db")
+                createFromInputStream {
+                    val parts = listOf(
+                        "offline_dictionary_00.bin",
+                        "offline_dictionary_01.bin",
+                        "offline_dictionary_02.bin",
+                        "offline_dictionary_03.bin",
+                    )
+                    java.util.zip.GZIPInputStream(
+                        object : java.io.InputStream() {
+                            private var partIndex = 0
+                            private var current: java.io.ByteArrayInputStream? = null
+
+                            private fun ensureCurrent(): java.io.ByteArrayInputStream? {
+                                while (true) {
+                                    val stream = current
+                                    if (stream != null && stream.available() > 0) return stream
+                                    if (partIndex >= parts.size) {
+                                        current = null
+                                        return null
+                                    }
+                                    current = java.io.ByteArrayInputStream(
+                                        lightContext.readAsset(parts[partIndex++])
+                                    )
+                                }
+                            }
+
+                            override fun read(): Int {
+                                val stream = ensureCurrent() ?: return -1
+                                return stream.read()
+                            }
+
+                            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                                if (len == 0) return 0
+                                val stream = ensureCurrent() ?: return -1
+                                return stream.read(b, off, len)
+                            }
+
+                            override fun close() {
+                                current = null
+                            }
+                        }
+                    )
+                }
                 fallbackToDestructiveMigration()
             }
         }

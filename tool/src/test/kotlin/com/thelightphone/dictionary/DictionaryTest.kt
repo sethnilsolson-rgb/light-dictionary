@@ -116,11 +116,35 @@ class DictionaryTest {
 
     @Test
     fun testOfflineDatabaseAssetExistsAndUnderGitHubLimit() {
-        val dbFile = File("src/main/assets/offline_dictionary.db")
-        assertTrue(dbFile.exists(), "offline_dictionary.db must exist")
-        val sizeMb = dbFile.length() / (1024.0 * 1024.0)
-        assertTrue(sizeMb > 10.0, "offline_dictionary.db should contain full lexicon, got $sizeMb MB")
-        assertTrue(sizeMb < 50.0, "offline_dictionary.db must stay under 50MB for clean GitHub pushes, got $sizeMb MB")
+        val parts = (0..3).map { idx ->
+            File("src/main/assets/offline_dictionary_%02d.bin".format(idx))
+        }
+        val maxBuildServerBytes = 5L * 1024L * 1024L
+        var totalBytes = 0L
+        for (part in parts) {
+            assertTrue(part.exists(), "${part.name} must exist")
+            assertTrue(part.length() > 0L, "${part.name} must not be empty")
+            assertTrue(
+                part.length() <= maxBuildServerBytes,
+                "${part.name} must stay <= 5 MiB for Light build server, got ${part.length()} bytes"
+            )
+            totalBytes += part.length()
+        }
+        val totalMb = totalBytes / (1024.0 * 1024.0)
+        assertTrue(totalMb > 10.0, "Compressed lexicon chunks should exceed 10 MB, got $totalMb MB")
+        assertTrue(totalMb < 50.0, "Compressed lexicon chunks must stay under 50 MB, got $totalMb MB")
+
+        val header = ByteArray(16)
+        val streams = java.util.Collections.enumeration(parts.map { it.inputStream() })
+        java.util.zip.GZIPInputStream(java.io.SequenceInputStream(streams)).use { gz ->
+            var read = 0
+            while (read < header.size) {
+                val n = gz.read(header, read, header.size - read)
+                if (n <= 0) break
+                read += n
+            }
+        }
+        assertEquals("SQLite format 3\u0000", String(header, Charsets.US_ASCII))
     }
 
     @Test

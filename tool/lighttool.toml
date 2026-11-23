@@ -1,8 +1,8 @@
 [tool]
 id = "com.setholson.dictionary"
 label = "Dictionary"
-versionCode = 8
-versionName = "1.0.7"
+versionCode = 9
+versionName = "1.0.8"
 permissions = ["android.permission.INTERNET"]
 capabilities = []
 # for the LightOS emulator, use the line below and build with -DlightSdk.allowAltServerPackage=true
