@@ -133,7 +133,7 @@ class BookmarksScreen(
                                     Column(modifier = Modifier.weight(1f)) {
                                         LightText(
                                             text = bookmark.word,
-                                            variant = LightTextVariant.Title,
+                                            variant = LightTextVariant.Subheading,
                                         )
 
                                         if (bookmark.partOfSpeech.isNotBlank() || bookmark.snippet.isNotBlank()) {
